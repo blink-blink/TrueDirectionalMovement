@@ -690,6 +690,13 @@ void DirectionalMovementHandler::OnDodge()
 
 void DirectionalMovementHandler::UpdateProjectileTargetMap()
 {
+	// This map is concurrently accessed from the projectile aim hook on a
+	// BSJobs worker thread (see Hooks::ProjectileHook::ProjectileAimSupport).
+	// Synchronize all read/erase/emplace operations to prevent the std::_Hash
+	// internal bucket array from being observed in a torn state during a
+	// _Forced_rehash (which was the source of the EXCEPTION_ACCESS_VIOLATION
+	// at TrueDirectionalMovement.dll+0038C19, rax=0 in std::_Hash::_Forced_rehash).
+	Locker lock(_lock);
 	if (!_projectileTargets.empty()) {
 		for (auto it = _projectileTargets.begin(), next_it = it; it != _projectileTargets.end(); it = next_it) {
 			++next_it;
@@ -2200,6 +2207,10 @@ void DirectionalMovementHandler::SetSoftTarget(RE::ActorHandle a_softTarget)
 
 RE::NiAVObject* DirectionalMovementHandler::GetProjectileTargetPoint(RE::ObjectRefHandle a_projectileHandle) const
 {
+	// Called from the projectile aim hook on a worker thread - must hold the
+	// lock to prevent observing a half-rehashed bucket array while another
+	// thread is mutating the map.
+	Locker lock(_lock);
 	auto it = _projectileTargets.find(a_projectileHandle);
 	if (it != _projectileTargets.end() && it->second) {
 		return it->second.get();
@@ -2210,11 +2221,16 @@ RE::NiAVObject* DirectionalMovementHandler::GetProjectileTargetPoint(RE::ObjectR
 
 void DirectionalMovementHandler::AddProjectileTarget(RE::ObjectRefHandle a_projectileHandle, RE::NiPointer<RE::NiAVObject> a_targetPoint)
 {
+	// emplace() may trigger _Forced_rehash which re-allocates the bucket
+	// array. Without locking, a concurrent reader on another thread can
+	// dereference a stale/null bucket pointer (the original crash).
+	Locker lock(_lock);
 	_projectileTargets.emplace(a_projectileHandle, a_targetPoint);
 }
 
 void DirectionalMovementHandler::RemoveProjectileTarget(RE::ObjectRefHandle a_projectileHandle)
 {
+	Locker lock(_lock);
 	_projectileTargets.erase(a_projectileHandle);
 }
 

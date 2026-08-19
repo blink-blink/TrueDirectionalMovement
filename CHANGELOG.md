@@ -1,5 +1,15 @@
 Changelog:
 
+Fix: Access violation crash in DirectionalMovementHandler::AddProjectileTarget (rax=0 in std::_Hash::_Forced_rehash)
+-----------------------------------------------------------------------------------------------------------------
+  * Root cause: The _projectileTargets unordered_map was being mutated from the projectile aim hook (Hooks::ProjectileHook::ProjectileAimSupport) which runs on a BSJobs worker thread, while simultaneously being iterated/erased on the main thread via UpdateProjectileTargetMap(). std::unordered_map is not thread-safe even for single-writer/single-reader pairs; during a _Forced_rehash triggered by emplace(), the bucket array is reallocated and a concurrent reader on another thread can dereference a stale (null) bucket pointer, producing the observed EXCEPTION_ACCESS_VIOLATION at TrueDirectionalMovement.dll+0038C19 (cmp r9d, [rax+0x10] with rax=0x0).
+  * Fix: DirectionalMovementHandler already declared a recursive_mutex _lock and Locker alias but never used them. Added Locker guards in:
+      - UpdateProjectileTargetMap()
+      - GetProjectileTargetPoint()
+      - AddProjectileTarget()
+      - RemoveProjectileTarget()
+  * Recursive mutex chosen so the lock is safe even if a guarded public API ends up calling another guarded public API on the same thread.
+
 Enable TargetLock when mounted on a dragon:
 ------------------------------------------
 
