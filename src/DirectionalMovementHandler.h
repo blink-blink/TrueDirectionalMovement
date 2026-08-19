@@ -198,6 +198,11 @@ public:
 	void UpdateMoveCameraBehindTarget(const float a_distanceToTarget);
 	void LookAtTarget(RE::ActorHandle a_target);
 	RE::NiPoint3 GetCameraAngle(RE::NiPoint3& a_playerPos,  RE::NiPoint3& a_cameraPos, RE::NiPoint3& a_cameraDirection);
+	// --- Modernization: target tracking helpers ---
+	void UpdateTargetTracking();
+	RE::NiPoint3 GetSmoothedCameraGroundHeight(const RE::NiPoint3& a_cameraPos);
+	void ResetTargetTracking();
+
 
 	bool ShouldFaceTarget() const { return _bShouldFaceTarget; }
 	bool ShouldFaceCrosshair() const { return _bShouldFaceCrosshair; }
@@ -376,4 +381,17 @@ private:
 	bool _targetLockRequestedSmoothCamCrosshair = false;
 
 	std::weak_ptr<Scaleform::TargetLockReticle> _targetLockReticle;
+
+	// --- Modernization state ---
+	// Target velocity tracking (for lookahead prediction)
+	RE::NiPoint3 _targetPositionPrev{ 0.f, 0.f, 0.f };
+	RE::NiPoint3 _targetVelocity{ 0.f, 0.f, 0.f };
+	bool _targetTrackingInitialized = false;
+	// Spring-damper state for camera yaw and pitch (replaces InterpAngleTo)
+	float _cameraYawVelocity = 0.f;
+	float _cameraPitchVelocity = 0.f;
+	// EMA-smoothed water/land height for camera pitch clamp (eliminates swim-shake)
+	float _smoothedCameraGroundHeight = -1.f;
+	// Lock grace period timer (counts down from fTargetLockLockGraceDuration when target is acquired)
+	float _lockGraceTimer = 0.f;
 };

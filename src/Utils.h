@@ -284,3 +284,93 @@ int GetFlyingState(RE::Actor* a_akActor);
 	// will not produce reliable results near the gimbal lock (pitch approaching +/- PI/2, ie straight upwards or downwards pitch)
 	return std::atan2(2.0f * (a_rotation.w * a_rotation.z + a_rotation.x * a_rotation.y), 1.0f - 2.0f * (a_rotation.y * a_rotation.y + a_rotation.z * a_rotation.z));
 }
+
+// ----------------------------------------------------------------------------
+// Target-lock helpers
+// ----------------------------------------------------------------------------
+
+// Critically-damped spring using the closed-form analytic solution.
+//
+// This is genuinely frame-independent: stepping dt=X once produces the exact
+// same result as stepping dt=X/N N times. Semi-implicit Euler (the previous
+// implementation) drifts when dt varies between frames; this does not.
+//
+// current and velocity are modified IN PLACE (passed by reference). The spring
+// accumulates momentum across frames, allowing it to briefly overshoot to catch
+// fast-moving targets -- the key property that distinguishes a spring from a
+// single-pole filter like InterpAngleTo.
+//
+// omega: natural frequency (rad/s). Higher = snappier. Settles in ~3/omega seconds.
+//        omega=6 -> ~0.5s settle; omega=8 -> ~0.375s; omega=12 -> ~0.25s.
+//        Damping is always critical (no overshoot past the target).
+//
+// Returns the new position (also stored in current).
+inline float CriticallyDampedSpring(float& current, float& velocity, float target, float dt, float omega)
+{
+	const float offset = current - target;  // how far current is above target
+	const float u = velocity + omega * offset;
+	const float e = std::exp(-omega * dt);
+	const float t_plus = offset + u * dt;
+	const float new_offset = t_plus * e;
+	const float new_velocity = (u - omega * t_plus) * e;
+	current = target + new_offset;
+	velocity = new_velocity;
+	return current;
+}
+
+// Angular version: takes the shortest path around the circle (handles wrapping).
+// Same analytic solution, but offset is wrapped to [-PI, PI] so the spring always
+// moves the short way. current is kept in its current branch (no sudden jumps
+// from 6.2 rad to 0.1 rad).
+inline float CriticallyDampedSpringAngle(float& current, float& velocity, float target, float dt, float omega)
+{
+	const float offset = NormalRelativeAngle(target - current);  // shortest signed delta to target
+	// In offset-space, offset' = -velocity (since offset = target - current, d/dt = -velocity)
+	const float offset_vel = -velocity;
+	const float u = offset_vel + omega * offset;
+	const float e = std::exp(-omega * dt);
+	const float t_plus = offset + u * dt;
+	const float new_offset = t_plus * e;
+	const float new_offset_vel = (u - omega * t_plus) * e;
+	// Reconstruct: current moved by (offset - new_offset) toward target
+	current = current + (offset - new_offset);
+	velocity = -new_offset_vel;  // velocity = -offset'
+	return current;
+}
+
+// Exponential moving average with optional decay rate.
+// alpha = 1 - exp(-rate * dt); higher rate = faster tracking.
+// Use for noisy scalar signals (water height, land height).
+[[nodiscard]] inline float ExponentialMovingAverage(float current, float sample, float deltaTime, float rate)
+{
+	if (rate <= 0.f) {
+		return sample;
+	}
+	const float alpha = 1.f - std::exp(-rate * deltaTime);
+	return current + (sample - current) * alpha;
+}
+
+// Soft logistic clamp: as `value` approaches `limit`, the pull toward `limit`
+// grows smoothly rather than snapping. When `value` is below `limit`, returns
+// value unchanged. When `value` is above `limit`, returns a value that
+// asymptotically approaches `limit + softWidth` but never reaches it.
+//
+// k: stiffness of the soft zone. ~3 -> gentle; ~8 -> sharp.
+// softWidth: how far past the limit the soft zone extends (in same units as value).
+[[nodiscard]] inline float SoftClamp(float value, float limit, float softWidth, float k)
+{
+	const float delta = value - limit;
+	if (delta <= 0.f) {
+		return value;
+	}
+	// Logistic: asymptotically approaches softWidth as delta -> +inf
+	const float t = delta / softWidth;
+	const float sig = 1.f / (1.f + std::exp(-k * (t - 1.f)));
+	return limit + sig * softWidth;
+}
+
+// Soft clamp variant for angular pitch (radians).
+[[nodiscard]] inline float SoftClampAngle(float value, float limit, float softWidth, float k)
+{
+	return SoftClamp(value, limit, softWidth, k);
+}

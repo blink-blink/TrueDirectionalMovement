@@ -1,5 +1,55 @@
 Changelog:
 
+Rewrite: Target Lock camera tracking replaced with analytic spring (BREAKING - not backwards compatible)
+-----------------------------------------------------------------------------------------------------------------
+  * The legacy InterpAngleTo + hard clamp target lock implementation has been replaced entirely.
+  * No legacy fallback code remains. No master toggle. The new implementation IS the implementation.
+
+  * Bug 1 fixed (whirlwind sprint pass-through fails to lock on):
+    - FindTarget adds velocity-based lookahead for fast-moving targets (>fTargetLockFastTargetVelocity).
+    - FindTarget extends the lock range by 15% for fast targets.
+    - CheckCurrentTarget relaxes the distance check (up to 2x) during a lock grace period
+      (fTargetLockLockGraceDuration, default 0.4s) after target acquisition.
+
+  * Bug 2 fixed (lock on at specific height fails / appears clamped):
+    - GetCameraAngle uses a soft logistic clamp (SoftClamp) instead of a hard clamp.
+    - The camera approaches the pitch limit asymptotically rather than hitting a wall.
+    - Tunable via fTargetLockPitchSoftClampWidth (default 0.25 rad) and fTargetLockPitchSoftClampK (default 5).
+
+  * Bug 3 fixed (underwater camera prevention causes shake while swimming + locked):
+    - GetSmoothedCameraGroundHeight applies EMA smoothing to the water/land height sample.
+    - Eliminates per-frame jitter from waving water surfaces (the swim-shake bug).
+    - Tunable via fTargetLockWaterHeightSmoothingRate (default 6).
+
+  * Critically-damped spring (CriticallyDampedSpringAngle in Utils.h):
+    - Replaces InterpAngleTo for all camera yaw/pitch and player yaw/pitch tracking.
+    - Uses the closed-form analytic solution of the spring ODE (not numerical integration).
+    - Genuinely frame-independent: stepping dt=X once produces the exact same result as
+      stepping dt=X/N N times. No drift when framerate varies.
+    - Velocity is passed by reference and accumulates momentum across frames, allowing
+      the camera to briefly overshoot to catch fast-moving targets (the key property that
+      distinguishes a spring from a single-pole filter).
+    - The 50ms dt cap in LookAtTarget has been removed (the analytic solution is stable at any dt).
+    - Tunable via fTargetLockSpringStiffness (omega, default 8 rad/s -> ~0.375s settle).
+
+  * Velocity-based target lookahead:
+    - UpdateTargetTracking computes the target velocity each frame (with low-pass smoothing).
+    - LookAtTarget leads the target by velocity * lookaheadTime (scales with distance).
+    - Tunable via fTargetLockLookaheadTime (default 0.10s) and fTargetLockFastTargetVelocity (default 300).
+
+  * Removed settings (no longer toggleable, always on):
+    - bTargetLockModernization, bTargetLockUseSpringDamper, bTargetLockVelocityPrediction,
+      bTargetLockSmoothWaterHeight, bTargetLockSoftPitchClamp, bTargetLockLockGracePeriod.
+
+  * Remaining tunable settings (all in MCM under 'Target Lock' page):
+    - fTargetLockSpringStiffness (spring omega, default 8)
+    - fTargetLockLookaheadTime (lookahead seconds, default 0.10)
+    - fTargetLockWaterHeightSmoothingRate (EMA rate, default 6)
+    - fTargetLockPitchSoftClampWidth (soft zone width, default 0.25 rad)
+    - fTargetLockPitchSoftClampK (soft clamp stiffness, default 5)
+    - fTargetLockLockGraceDuration (grace period seconds, default 0.40)
+    - fTargetLockFastTargetVelocity (fast target threshold, default 300)
+
 Fix: Access violation crash in DirectionalMovementHandler::AddProjectileTarget (rax=0 in std::_Hash::_Forced_rehash)
 -----------------------------------------------------------------------------------------------------------------
   * Root cause: The _projectileTargets unordered_map was being mutated from the projectile aim hook (Hooks::ProjectileHook::ProjectileAimSupport) which runs on a BSJobs worker thread, while simultaneously being iterated/erased on the main thread via UpdateProjectileTargetMap(). std::unordered_map is not thread-safe even for single-writer/single-reader pairs; during a _Forced_rehash triggered by emplace(), the bucket array is reallocated and a concurrent reader on another thread can dereference a stale (null) bucket pointer, producing the observed EXCEPTION_ACCESS_VIOLATION at TrueDirectionalMovement.dll+0038C19 (cmp r9d, [rax+0x10] with rax=0x0).

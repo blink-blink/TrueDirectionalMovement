@@ -117,8 +117,6 @@ struct Settings
 	static inline float fTargetLockDistanceMultiplierSmall = 1.f;
 	static inline float fTargetLockDistanceMultiplierLarge = 2.f;
 	static inline float fTargetLockDistanceMultiplierExtraLarge = 4.f;
-	static inline float fTargetLockPitchAdjustSpeed = 2.f;
-	static inline float fTargetLockYawAdjustSpeed = 8.f;
 	static inline float fTargetLockPitchOffsetStrength = 0.25f;
 	static inline TargetLockProjectileAimType uTargetLockArrowAimType = TargetLockProjectileAimType::kPredict;
 	static inline TargetLockProjectileAimType uTargetLockMissileAimType = TargetLockProjectileAimType::kPredict;
@@ -175,4 +173,21 @@ struct Settings
 	static inline RE::TESGlobal* glob_nemesisHeadtracking = nullptr;
 	static inline RE::TESGlobal* glob_nemesisMountedArchery = nullptr;
 	static inline RE::TESGlobal* glob_nemesisLeaning = nullptr;
+
+	// --- Target Lock (modernized) ---
+	// Spring natural frequency (rad/s). Higher = snappier. Settles in ~3/omega seconds.
+	// omega=6 -> ~0.5s settle; omega=8 -> ~0.375s; omega=12 -> ~0.25s.
+	static inline float fTargetLockSpringStiffness = 8.f;
+	// Lookahead seconds at max lock distance (scales linearly with distance-to-target).
+	static inline float fTargetLockLookaheadTime = 0.10f;
+	// EMA rate for water/land height smoothing (eliminates swim-shake from waving water).
+	static inline float fTargetLockWaterHeightSmoothingRate = 6.f;
+	// Soft pitch clamp zone width (radians) past the hard limit.
+	static inline float fTargetLockPitchSoftClampWidth = 0.25f;
+	// Soft pitch clamp stiffness. ~3 gentle, ~8 sharp.
+	static inline float fTargetLockPitchSoftClampK = 5.f;
+	// Lock grace period duration (seconds) after target acquisition.
+	static inline float fTargetLockLockGraceDuration = 0.40f;
+	// Velocity threshold (units/sec) above which a target is 'fast-moving'.
+	static inline float fTargetLockFastTargetVelocity = 300.f;
 };

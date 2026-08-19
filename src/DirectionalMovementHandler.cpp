@@ -170,6 +170,8 @@ void DirectionalMovementHandler::Update()
 
 	UpdateTargetLock();
 
+	UpdateTargetTracking();
+
 	UpdateTweeningState();
 
 	UpdateFacingState();
@@ -1285,13 +1287,18 @@ void DirectionalMovementHandler::UpdateRotationLockedCam()
 	const float realTimeDeltaTime = GetRealTimeDeltaTime();
 
 	float desiredCharacterYaw = currentCharacterYaw + angleDelta;
-	playerCharacter->SetHeading(InterpAngleTo(currentCharacterYaw, desiredCharacterYaw, realTimeDeltaTime, Settings::fTargetLockYawAdjustSpeed));
+	// Analytic critically-damped spring (frame-independent, accumulates momentum).
+	float yaw = currentCharacterYaw;
+	CriticallyDampedSpringAngle(yaw, _cameraYawVelocity, desiredCharacterYaw, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
+	playerCharacter->SetHeading(yaw);
 
 	// pitch
 	RE::NiPoint3 playerAngle = ToOrientationRotation(playerDirectionToTarget);
 	float desiredPlayerPitch = -playerAngle.x;
 
-	playerCharacter->SetLooking(InterpAngleTo(currentCharacterPitch, desiredPlayerPitch, realTimeDeltaTime, Settings::fTargetLockPitchAdjustSpeed));
+	float pitch = currentCharacterPitch;
+	CriticallyDampedSpringAngle(pitch, _cameraPitchVelocity, desiredPlayerPitch, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
+	playerCharacter->SetLooking(pitch);
 }
 
 void DirectionalMovementHandler::UpdateTweeningState()
@@ -1591,11 +1598,22 @@ bool DirectionalMovementHandler::CheckCurrentTarget(RE::ActorHandle a_target, bo
 	if (!currentProcess || !currentProcess->InHighProcess() ||
 		target->IsDead() ||
 		(actorState->IsBleedingOut() && target->IsEssential()) ||
-		target->GetPosition().GetDistance(playerCharacter->GetPosition()) > (Settings::fTargetLockDistance * GetTargetLockDistanceRaceSizeMultiplier(target->GetRace()) * _targetLockDistanceHysteresis) ||
 		target->AsActorValueOwner()->GetActorValue(RE::ActorValue::kInvisibility) > 0 ||
 		//RE::UI::GetSingleton()->IsMenuOpen("Dialogue Menu"))
 		RE::MenuTopicManager::GetSingleton()->speaker)
 	{
+		return false;
+	}
+
+	// Distance check - relaxed during the lock grace period (whirlwind sprint-through fix).
+	// Without this, a fast-moving target that just got locked onto can be dropped on the very
+	// next frame because it has already moved out of the lock range.
+	const float targetDistance = target->GetPosition().GetDistance(playerCharacter->GetPosition());
+	const float maxLockDistance = Settings::fTargetLockDistance * GetTargetLockDistanceRaceSizeMultiplier(target->GetRace()) * _targetLockDistanceHysteresis;
+	// Grace period: relax the distance check for a short time after target acquisition.
+	// Allows up to 2x lock distance during grace, preventing whirlwind-sprint drop.
+	const float graceMult = (_lockGraceTimer > 0.f) ? 2.f : 1.f;
+	if (targetDistance > maxLockDistance * graceMult) {
 		return false;
 	}
 
@@ -1747,14 +1765,32 @@ RE::ActorHandle DirectionalMovementHandler::FindTarget(TargetLockSelectionMode a
 		}
 		if (IsActorValidTarget(actor)) {
 			float targetLockMaxDistance = Settings::fTargetLockDistance * GetTargetLockDistanceRaceSizeMultiplier(actor->GetRace());
-			
+
 			auto targetPoint = GetBestTargetPoint(actorHandle);
 
 			RE::NiPoint3 actorPosition = targetPoint ? targetPoint->world.translate : actor->GetLookingAtLocation();
+
+			// Velocity-based lookahead for fast-moving targets.
+			RE::NiPoint3 actorVelocity(0.f, 0.f, 0.f);
+			if (actor->GetActorRuntimeData().currentProcess && actor->GetActorRuntimeData().currentProcess->InHighProcess()) {
+				actor->GetLinearVelocity(actorVelocity);
+			}
+			const float speed = actorVelocity.Length();
+			if (speed > Settings::fTargetLockFastTargetVelocity) {
+				const float distanceScale = Clamp(static_cast<float>(actorPosition.GetDistance(playerPosition)) / Settings::fTargetLockDistance, 0.f, 1.f);
+				const float lookaheadTime = Settings::fTargetLockLookaheadTime * distanceScale;
+				actorPosition = actorPosition + actorVelocity * lookaheadTime;
+			}
+
 			RE::NiPoint3 directionVector = actorPosition - playerPosition;
 
 			float distance = directionVector.Unitize();
-			
+
+			// Extend range for fast-moving targets.
+			if (speed > Settings::fTargetLockFastTargetVelocity) {
+				targetLockMaxDistance *= 1.15f;  // +15% range for fast targets
+			}
+
 			if (distance <= targetLockMaxDistance) {
 				switch (a_mode) {
 				case TargetLockSelectionMode::kClosest:
@@ -2160,6 +2196,14 @@ void DirectionalMovementHandler::SetTarget(RE::ActorHandle a_target)
 	}
 
 	_target = a_target;
+
+	// Reset modernization state so velocity/prediction don't carry over from previous target
+	ResetTargetTracking();
+
+	// Start lock grace period for new target.
+	if (a_target) {
+		_lockGraceTimer = Settings::fTargetLockLockGraceDuration;
+	}
 
 	SetTargetPoint(GetBestTargetPoint(a_target));
 
@@ -2625,6 +2669,94 @@ void DirectionalMovementHandler::UpdateMoveCameraBehindTarget(const float a_dist
 }
 
 // probably bad math ahead
+// =============================================================================
+// Modernization: target tracking helpers
+// =============================================================================
+
+void DirectionalMovementHandler::ResetTargetTracking()
+{
+	_targetPositionPrev = RE::NiPoint3{ 0.f, 0.f, 0.f };
+	_targetVelocity = RE::NiPoint3{ 0.f, 0.f, 0.f };
+	_targetTrackingInitialized = false;
+	_cameraYawVelocity = 0.f;
+	_cameraPitchVelocity = 0.f;
+	_smoothedCameraGroundHeight = -1.f;
+	_lockGraceTimer = 0.f;
+}
+
+void DirectionalMovementHandler::UpdateTargetTracking()
+{
+	// Compute target velocity for lookahead prediction. Called once per frame from Update().
+	if (!_target) {
+		_targetTrackingInitialized = false;
+		return;
+	}
+
+	auto target = _target.get();
+	if (!target) {
+		_targetTrackingInitialized = false;
+		return;
+	}
+
+	RE::NiPoint3 currentPos = target->GetPosition();
+	const float dt = GetRealTimeDeltaTime();
+
+	if (!_targetTrackingInitialized || dt <= 0.f || dt > 0.5f) {
+		// First frame or huge dt gap (load, pause) - just record position, don't compute velocity
+		_targetPositionPrev = currentPos;
+		_targetVelocity = RE::NiPoint3{ 0.f, 0.f, 0.f };
+		_targetTrackingInitialized = true;
+		return;
+	}
+
+	// Compute raw velocity (units/sec)
+	RE::NiPoint3 rawVelocity = (currentPos - _targetPositionPrev) * (1.f / dt);
+
+	// Clamp the velocity to a sane range to avoid spikes from teleport/respawn
+	const float maxVelocity = 5000.f;
+	float speedSq = rawVelocity.SqrLength();
+	if (speedSq > maxVelocity * maxVelocity) {
+		rawVelocity *= maxVelocity / std::sqrt(speedSq);
+	}
+
+	// Smooth velocity with a low-pass filter to avoid per-frame jitter
+	// (target bones jitter slightly as animation updates)
+	const float velocitySmoothing = 8.f;  // EMA rate
+	const float alpha = 1.f - std::exp(-velocitySmoothing * dt);
+	_targetVelocity = _targetVelocity + (rawVelocity - _targetVelocity) * alpha;
+
+	_targetPositionPrev = currentPos;
+
+	// Tick down the lock grace period timer
+	if (_lockGraceTimer > 0.f) {
+		_lockGraceTimer -= dt;
+		if (_lockGraceTimer < 0.f) _lockGraceTimer = 0.f;
+	}
+}
+
+RE::NiPoint3 DirectionalMovementHandler::GetSmoothedCameraGroundHeight(const RE::NiPoint3& a_cameraPos)
+{
+	// Returns a smoothed version of (land or water) height at the camera position.
+	// The raw GetLandHeightWithWater() bounces every frame on waving water surfaces,
+	// which causes the camera pitch clamp threshold to jitter, which causes the swim-shake.
+	// EMA smooths this out.
+	const float rawHeight = GetLandHeightWithWater(a_cameraPos);
+
+	const float dt = GetRealTimeDeltaTime();
+	if (_smoothedCameraGroundHeight < 0.f) {
+		// Initialize on first frame or after reset
+		_smoothedCameraGroundHeight = rawHeight;
+		return RE::NiPoint3{ a_cameraPos.x, a_cameraPos.y, rawHeight };
+	}
+
+	// EMA smoothing. The water surface bobs with sine-wave-like motion;
+	// a rate of ~6 Hz gives ~0.16s response - smooths the bobbing but still tracks water level changes.
+	_smoothedCameraGroundHeight = ExponentialMovingAverage(
+		_smoothedCameraGroundHeight, rawHeight, dt, Settings::fTargetLockWaterHeightSmoothingRate);
+
+	return RE::NiPoint3{ a_cameraPos.x, a_cameraPos.y, _smoothedCameraGroundHeight };
+}
+
 void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 {
 	if (_bIsAiming) {
@@ -2636,6 +2768,21 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 	}
 
 	RE::NiPoint3 targetPos = _currentTargetPoint ? _currentTargetPoint->world.translate : _target.get()->GetLookingAtLocation();
+
+	// Velocity-based target lookahead: lead the target by velocity * lookaheadTime
+	// so the camera aims where the target WILL be, not where it WAS.
+	{
+		const float speed = _targetVelocity.Length();
+		if (speed > Settings::fTargetLockFastTargetVelocity) {
+			RE::NiPoint3 playerPosForDist;
+			if (GetTorsoPos(RE::PlayerCharacter::GetSingleton(), playerPosForDist)) {
+				const float dist = targetPos.GetDistance(playerPosForDist);
+				const float distanceScale = Clamp(dist / Settings::fTargetLockDistance, 0.f, 1.f);
+				const float lookaheadTime = Settings::fTargetLockLookaheadTime * distanceScale;
+				targetPos = targetPos + _targetVelocity * lookaheadTime;
+			}
+		}
+	}
 
 	auto playerCharacter = RE::PlayerCharacter::GetSingleton();
 	auto playerCamera = RE::PlayerCamera::GetSingleton();
@@ -2773,8 +2920,8 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 	}
 	angleDelta = NormalRelativeAngle(angleDelta);
 
-	// Clamp realTimeDeltaTime to max 50ms/frame. Prevents too fast camera rotation when the game is running at low FPS.
-	const float realTimeDeltaTime = GetRealTimeDeltaTime() < 0.05f ? GetRealTimeDeltaTime() : 0.05f;
+	// Analytic spring is stable at any dt, so no cap needed (frame-independent).
+	const float realTimeDeltaTime = GetRealTimeDeltaTime();
 
 	float desiredFreeCameraRotation = currentCameraYawOffset + angleDelta;
 	if (_isLockedCameraTransitioning && !_isBehind && fabs(angleDelta) < PI/180.f) {
@@ -2782,7 +2929,8 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 		_isLockedCameraTransitioning_prev = false;
 	}
 
-	thirdPersonState->freeRotation.x = InterpAngleTo(currentCameraYawOffset, desiredFreeCameraRotation, realTimeDeltaTime, Settings::fTargetLockYawAdjustSpeed);
+	// Analytic critically-damped spring (frame-independent, accumulates momentum).
+	CriticallyDampedSpringAngle(thirdPersonState->freeRotation.x, _cameraYawVelocity, desiredFreeCameraRotation, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
 
 	if (_isBehind)
 	{
@@ -2828,7 +2976,7 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 	if (!bIsHorseCamera && !bIsDragonCamera) {
 		thirdPersonState->freeRotation.y += cameraPitchOffset;
 	}
-	thirdPersonState->freeRotation.y = InterpAngleTo(thirdPersonState->freeRotation.y, desiredCameraAngle, realTimeDeltaTime, Settings::fTargetLockPitchAdjustSpeed);
+	CriticallyDampedSpringAngle(thirdPersonState->freeRotation.y, _cameraPitchVelocity, desiredCameraAngle, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
 }
 
 RE::NiPoint3 DirectionalMovementHandler::GetCameraAngle(RE::NiPoint3& a_playerPos, RE::NiPoint3& a_cameraPos, RE::NiPoint3& a_cameraDirection) 
@@ -2838,7 +2986,14 @@ RE::NiPoint3 DirectionalMovementHandler::GetCameraAngle(RE::NiPoint3& a_playerPo
 	if (!RE::PlayerCharacter::GetSingleton()->GetParentCell()->IsInteriorCell()) {
 		// determine vertical projection of the camera position to the minimal height above ground
 		RE::NiPoint3 offsetGroundPos = a_cameraPos;
-		offsetGroundPos.z =  GetLandHeightWithWater(a_cameraPos) + Settings::fTargetLockMinHeightAboveGround;
+
+		// --- Modernization: use EMA-smoothed water/land height to fix swim-shake ---
+		// The raw GetLandHeightWithWater() bounces every frame on waving water surfaces.
+		// This causes the clamp threshold to jitter, which causes the camera pitch to jitter.
+		// The smoothing is done in GetSmoothedCameraGroundHeight().
+		RE::NiPoint3 smoothedGroundPos = GetSmoothedCameraGroundHeight(a_cameraPos);
+		offsetGroundPos.z = smoothedGroundPos.z + Settings::fTargetLockMinHeightAboveGround;
+
 		RE::NiPoint3 offsetGroundPosToPlayer = RE::NiPoint3(a_playerPos.x - offsetGroundPos.x, a_playerPos.y - offsetGroundPos.y, a_playerPos.z - offsetGroundPos.z);
 		RE::NiPoint3 offsetGroundPosToPlayerDirection = offsetGroundPosToPlayer;
 		offsetGroundPosToPlayerDirection.Unitize();
@@ -2846,10 +3001,14 @@ RE::NiPoint3 DirectionalMovementHandler::GetCameraAngle(RE::NiPoint3& a_playerPo
 		// get the angle from the offsetGroundPos to the player
 		RE::NiPoint3 offsetGroundPosAngle =  ToOrientationRotation(offsetGroundPosToPlayerDirection);
 
-		// use offsetGroundPosAngle to adjust the camera pitch if needed
+		// Soft logistic clamp: approaches the limit asymptotically (no visible 'wall').
 		if (offsetGroundPosAngle.x < cameraAngle.x) {
-			// don't go below the angle of the final camera <-> target direction
-			cameraAngle.x = offsetGroundPosAngle.x;
+			// Soft-clamp the downward pitch so it gradually approaches the ground/water limit
+			// instead of snapping. We work in negated space because both angles are 'more negative = down'.
+			const float negCam = -cameraAngle.x;
+			const float negLimit = -offsetGroundPosAngle.x;
+			const float clampedNeg = SoftClamp(negCam, negLimit, Settings::fTargetLockPitchSoftClampWidth, Settings::fTargetLockPitchSoftClampK);
+			cameraAngle.x = -clampedNeg;
 		}
 	}
 

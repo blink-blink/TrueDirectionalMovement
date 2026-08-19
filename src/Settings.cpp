@@ -147,8 +147,6 @@ void Settings::ReadSettings()
 		ReadFloatSetting(mcm, "TargetLock", "fTargetLockDistanceMultiplierSmall", fTargetLockDistanceMultiplierSmall);
 		ReadFloatSetting(mcm, "TargetLock", "fTargetLockDistanceMultiplierLarge", fTargetLockDistanceMultiplierLarge);
 		ReadFloatSetting(mcm, "TargetLock", "fTargetLockDistanceMultiplierExtraLarge", fTargetLockDistanceMultiplierExtraLarge);
-		ReadFloatSetting(mcm, "TargetLock", "fTargetLockPitchAdjustSpeed", fTargetLockPitchAdjustSpeed);
-		ReadFloatSetting(mcm, "TargetLock", "fTargetLockYawAdjustSpeed", fTargetLockYawAdjustSpeed);
 		ReadFloatSetting(mcm, "TargetLock", "fTargetLockPitchOffsetStrength", fTargetLockPitchOffsetStrength);
 		ReadFloatSetting(mcm, "TargetLock", "fTargetLockMinHeightAboveGround", fTargetLockMinHeightAboveGround);
 		ReadUInt32Setting(mcm, "TargetLock", "uTargetLockArrowAimType", (uint32_t&)uTargetLockArrowAimType);
@@ -163,6 +161,15 @@ void Settings::ReadSettings()
 		ReadBoolSetting(mcm, "TargetLock", "bResetCameraWithTargetLock", bResetCameraWithTargetLock);
 		ReadBoolSetting(mcm, "TargetLock", "bResetCameraPitch", bResetCameraPitch);
 		ReadBoolSetting(mcm, "TargetLock", "bTargetLockEnableLockBehindTarget", bTargetLockEnableLockBehindTarget);
+
+		// Target Lock (modernized)
+		ReadFloatSetting(mcm, "TargetLock", "fTargetLockSpringStiffness",        fTargetLockSpringStiffness);
+		ReadFloatSetting(mcm, "TargetLock", "fTargetLockLookaheadTime",         fTargetLockLookaheadTime);
+		ReadFloatSetting(mcm, "TargetLock", "fTargetLockWaterHeightSmoothingRate", fTargetLockWaterHeightSmoothingRate);
+		ReadFloatSetting(mcm, "TargetLock", "fTargetLockPitchSoftClampWidth",    fTargetLockPitchSoftClampWidth);
+		ReadFloatSetting(mcm, "TargetLock", "fTargetLockPitchSoftClampK",        fTargetLockPitchSoftClampK);
+		ReadFloatSetting(mcm, "TargetLock", "fTargetLockLockGraceDuration",      fTargetLockLockGraceDuration);
+		ReadFloatSetting(mcm, "TargetLock", "fTargetLockFastTargetVelocity",     fTargetLockFastTargetVelocity);
 
 		// HUD
 		ReadBoolSetting(mcm, "HUD", "bEnableTargetLockReticle", bEnableTargetLockReticle);
