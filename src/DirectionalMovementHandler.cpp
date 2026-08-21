@@ -1289,7 +1289,7 @@ void DirectionalMovementHandler::UpdateRotationLockedCam()
 	float desiredCharacterYaw = currentCharacterYaw + angleDelta;
 	// Analytic critically-damped spring (frame-independent, accumulates momentum).
 	float yaw = currentCharacterYaw;
-	CriticallyDampedSpringAngle(yaw, _cameraYawVelocity, desiredCharacterYaw, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
+	CriticallyDampedSpringAngle(yaw, _playerYawVelocity, desiredCharacterYaw, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
 	playerCharacter->SetHeading(yaw);
 
 	// pitch
@@ -1297,7 +1297,7 @@ void DirectionalMovementHandler::UpdateRotationLockedCam()
 	float desiredPlayerPitch = -playerAngle.x;
 
 	float pitch = currentCharacterPitch;
-	CriticallyDampedSpringAngle(pitch, _cameraPitchVelocity, desiredPlayerPitch, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
+	CriticallyDampedSpringAngle(pitch, _playerPitchVelocity, desiredPlayerPitch, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
 	playerCharacter->SetLooking(pitch);
 }
 
@@ -2680,6 +2680,8 @@ void DirectionalMovementHandler::ResetTargetTracking()
 	_targetTrackingInitialized = false;
 	_cameraYawVelocity = 0.f;
 	_cameraPitchVelocity = 0.f;
+	_playerYawVelocity = 0.f;
+	_playerPitchVelocity = 0.f;
 	_smoothedCameraGroundHeight = -1.f;
 	_lockGraceTimer = 0.f;
 }
@@ -2934,6 +2936,10 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 
 	if (_isBehind)
 	{
+		// The pitch spring is skipped while behind the player during a camera
+		// transition; zero its velocity so no stale momentum kicks the pitch
+		// when tracking resumes.
+		_cameraPitchVelocity = 0.f;
 		return; // don't adjust pitch
 	}
 

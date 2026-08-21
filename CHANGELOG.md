@@ -1,5 +1,19 @@
 Changelog:
 
+Fix: Two spring-state bugs in the target lock rewrite
+-----------------------------------------------------------------------------------------------------------------
+  * Spring velocity state was shared between the camera springs (LookAtTarget, driving
+    thirdPersonState->freeRotation) and the player rotation springs (UpdateRotationLockedCam,
+    driving the player's heading/pitch). The two code paths are mutually exclusive per frame,
+    but switching between free-cam lock and locked-cam mode (or mounting/dismounting) carried
+    momentum accumulated against one quantity over to the other, producing a visible snap or
+    overshoot. The state is now split into separate _cameraYawVelocity/_cameraPitchVelocity
+    and _playerYawVelocity/_playerPitchVelocity members (all reset in ResetTargetTracking()).
+  * The pitch spring in LookAtTarget is skipped while _isBehind (camera transition behind the
+    player). Its velocity was frozen with a stale value during the whole transition and then
+    released at once when tracking resumed, kicking the camera pitch at transition end.
+    The pitch spring velocity is now zeroed while the spring is skipped.
+
 Improved: Target switch on mouse movement (accumulated-travel detection with hysteresis)
 -----------------------------------------------------------------------------------------------------------------
   * The old implementation compared each individual MouseMoveEvent delta against the

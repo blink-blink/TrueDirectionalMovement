@@ -387,9 +387,14 @@ private:
 	RE::NiPoint3 _targetPositionPrev{ 0.f, 0.f, 0.f };
 	RE::NiPoint3 _targetVelocity{ 0.f, 0.f, 0.f };
 	bool _targetTrackingInitialized = false;
-	// Spring-damper state for camera yaw and pitch (replaces InterpAngleTo)
+	// Spring-damper state for camera yaw and pitch (replaces InterpAngleTo).
+	// Separate state per driven quantity: the camera freeRotation springs and the
+	// player heading springs run in mutually exclusive code paths, so sharing
+	// velocity between them would leak momentum across mode switches.
 	float _cameraYawVelocity = 0.f;
 	float _cameraPitchVelocity = 0.f;
+	float _playerYawVelocity = 0.f;
+	float _playerPitchVelocity = 0.f;
 	// EMA-smoothed water/land height for camera pitch clamp (eliminates swim-shake)
 	float _smoothedCameraGroundHeight = -1.f;
 	// Lock grace period timer (counts down from fTargetLockLockGraceDuration when target is acquired)
