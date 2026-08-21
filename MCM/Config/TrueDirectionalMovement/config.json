@@ -1104,7 +1104,7 @@
                     }
                 },
                 {
-                    "id": "uTargetLockMouseSensitivity:TargetLock",
+                    "id": "uTargetLockFlickSharpness:TargetLock",
                     "text": "$TrueDirectionalMovement_TargetLockMouseSensitivity_OptionText",
                     "type": "slider",
                     "help": "$TrueDirectionalMovement_TargetLockMouseSensitivity_InfoText",

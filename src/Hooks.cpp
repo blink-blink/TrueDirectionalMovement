@@ -374,10 +374,10 @@ namespace Hooks
 			// Dominant-axis (Chebyshev) magnitude: diagonals don't inflate the trigger distance.
 			// (std::max) - parenthesized to dodge the max macro from windows.h
 			const float magnitude = (std::max)(fabs(mouseSwitchAccumX), fabs(mouseSwitchAccumY));
-			const float sensitivity = (std::max)(static_cast<float>(Settings::uTargetLockMouseSensitivity), 1.f);
+			const float flickSharpness = (std::max)(static_cast<float>(Settings::uTargetLockFlickSharpness), 1.f);
 
 			if (!mouseSwitchLatched) {
-				if (magnitude >= sensitivity) {
+				if (magnitude >= flickSharpness) {
 					if (fabs(mouseSwitchAccumX) > fabs(mouseSwitchAccumY)) {
 						if (mouseSwitchAccumX > 0.f) {
 							directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kRight);
@@ -394,7 +394,7 @@ namespace Hooks
 
 					mouseSwitchLatched = true;
 				}
-			} else if (magnitude <= sensitivity * 0.4f) {
+			} else if (magnitude <= flickSharpness * 0.4f) {
 				mouseSwitchLatched = false;
 			}
 		}

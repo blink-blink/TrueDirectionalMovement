@@ -124,7 +124,7 @@ struct Settings
 	static inline bool bTargetLockUsePOVSwitchGamepad = true;
 	static inline float fTargetLockPOVHoldDuration = 0.25f;
 	static inline bool bTargetLockUseMouse = true;
-	static inline uint32_t uTargetLockMouseSensitivity = 32;
+	static inline uint32_t uTargetLockFlickSharpness = 32;
 	static inline bool bTargetLockUseScrollWheel = true;
 	static inline bool bTargetLockUseRightThumbstick = true;
 	static inline bool bResetCameraWithTargetLock = true;

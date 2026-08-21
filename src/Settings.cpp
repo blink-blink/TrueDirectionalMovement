@@ -155,7 +155,7 @@ void Settings::ReadSettings()
 		ReadBoolSetting(mcm, "TargetLock", "bTargetLockUsePOVSwitchGamepad", bTargetLockUsePOVSwitchGamepad);
 		ReadFloatSetting(mcm, "TargetLock", "fTargetLockPOVHoldDuration", fTargetLockPOVHoldDuration);
 		ReadBoolSetting(mcm, "TargetLock", "bTargetLockUseMouse", bTargetLockUseMouse);
-		ReadUInt32Setting(mcm, "TargetLock", "uTargetLockMouseSensitivity", (uint32_t&)uTargetLockMouseSensitivity);
+		ReadUInt32Setting(mcm, "TargetLock", "uTargetLockFlickSharpness", (uint32_t&)uTargetLockFlickSharpness);
 		ReadBoolSetting(mcm, "TargetLock", "bTargetLockUseScrollWheel", bTargetLockUseScrollWheel);
 		ReadBoolSetting(mcm, "TargetLock", "bTargetLockUseRightThumbstick", bTargetLockUseRightThumbstick);
 		ReadBoolSetting(mcm, "TargetLock", "bResetCameraWithTargetLock", bResetCameraWithTargetLock);
