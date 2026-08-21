@@ -1,5 +1,25 @@
 Changelog:
 
+Improved: Target switch on mouse movement (accumulated-travel detection with hysteresis)
+-----------------------------------------------------------------------------------------------------------------
+  * The old implementation compared each individual MouseMoveEvent delta against the
+    sensitivity threshold using an L1 norm (|x|+|y|). Because a single fast flick
+    generates many events that each exceed the threshold, one flick could chain-fire
+    multiple switches. The bTargetRecentlySwitched latch was set in the mouse path
+    but never actually checked there (dead code), so it did not prevent this.
+  * The new implementation accumulates mouse deltas into a virtual stick position
+    that decays toward zero with a ~150ms half-life (time-based, using steady_clock).
+    A switch fires when the accumulated dominant-axis (Chebyshev) magnitude reaches
+    the sensitivity threshold, and re-arms only after the position decays back below
+    40% of the threshold (hysteresis).
+  * One flick = exactly one switch. Slow, deliberate movement still accumulates and
+    triggers. Continued steady movement in one direction cycles targets.
+  * uTargetLockMouseSensitivity now maps directly to mouse travel distance required
+    per switch, so the setting has a meaningful effect across its whole range.
+  * Diagonal movement no longer inflates the trigger distance (Chebyshev instead of
+    L1 norm). Sensitivity is clamped to a minimum of 1.
+  * MCM help text updated to describe the new behavior.
+
 Rewrite: Target Lock camera tracking replaced with analytic spring (BREAKING - not backwards compatible)
 -----------------------------------------------------------------------------------------------------------------
   * The legacy InterpAngleTo + hard clamp target lock implementation has been replaced entirely.

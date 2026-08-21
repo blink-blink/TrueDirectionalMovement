@@ -5,6 +5,9 @@
 #include "Utils.h"
 #include "RayCast.h"
 
+#include <chrono>
+#include <cmath>
+
 namespace Hooks
 {
 	struct SaveCamera
@@ -335,6 +338,17 @@ namespace Hooks
 		}
 	}
 
+	// --- Mouse target-switch state ---
+	// Mouse deltas are accumulated into a virtual stick position that decays toward
+	// zero over time. A switch fires when the accumulated travel exceeds the
+	// sensitivity threshold; it re-arms only after the position decays back below
+	// a release threshold (hysteresis). This makes one flick = one switch, and makes
+	// the sensitivity setting correspond to actual distance moved.
+	static float mouseSwitchAccumX = 0.f;
+	static float mouseSwitchAccumY = 0.f;
+	static std::chrono::steady_clock::time_point mouseSwitchLastEvent{};
+	static bool mouseSwitchLatched = false;
+
 	void LookHook::ProcessMouseMove(RE::LookHandler* a_this, RE::MouseMoveEvent* a_event, RE::PlayerControlsData* a_data)
 	{
 		auto directionalMovementHandler = DirectionalMovementHandler::GetSingleton();
@@ -345,38 +359,50 @@ namespace Hooks
 				return; // ensure lock camera movement during lockon
 			}
 
-			int32_t absX = abs(a_event->mouseInputX);
-			int32_t absY = abs(a_event->mouseInputY);
+			const auto now = std::chrono::steady_clock::now();
+			const float dt = std::chrono::duration<float>(now - mouseSwitchLastEvent).count();
+			mouseSwitchLastEvent = now;
 
-			if (absX + absY > static_cast<int32_t>(Settings::uTargetLockMouseSensitivity))
-			{
-				if (absX > absY)
-				{
-					if (a_event->mouseInputX > 0) {
-						directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kRight);
-					} else {
-						directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kLeft);
-					}
-				}
-				else 
-				{
-					if (a_event->mouseInputY > 0) {
-						directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kDown);
-					} else {
-						directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kUp);
-					}
-				}
+			// Decay the accumulated travel toward zero (half-life ~150ms). A long pause
+			// between events (dt large) wipes the accumulator, which also releases the latch.
+			const float decay = std::exp(-dt / 0.15f * std::log(2.f));
+			mouseSwitchAccumX *= decay;
+			mouseSwitchAccumY *= decay;
+			mouseSwitchAccumX += static_cast<float>(a_event->mouseInputX);
+			mouseSwitchAccumY += static_cast<float>(a_event->mouseInputY);
 
-				bTargetRecentlySwitched = true;
-			} 
-			else if (absX + absY <= static_cast<int32_t>(Settings::uTargetLockMouseSensitivity))
-			{
-				bTargetRecentlySwitched = false;
+			// Dominant-axis (Chebyshev) magnitude: diagonals don't inflate the trigger distance.
+			// (std::max) - parenthesized to dodge the max macro from windows.h
+			const float magnitude = (std::max)(fabs(mouseSwitchAccumX), fabs(mouseSwitchAccumY));
+			const float sensitivity = (std::max)(static_cast<float>(Settings::uTargetLockMouseSensitivity), 1.f);
+
+			if (!mouseSwitchLatched) {
+				if (magnitude >= sensitivity) {
+					if (fabs(mouseSwitchAccumX) > fabs(mouseSwitchAccumY)) {
+						if (mouseSwitchAccumX > 0.f) {
+							directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kRight);
+						} else {
+							directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kLeft);
+						}
+					} else {
+						if (mouseSwitchAccumY > 0.f) {
+							directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kDown);
+						} else {
+							directionalMovementHandler->SwitchTarget(DirectionalMovementHandler::Direction::kUp);
+						}
+					}
+
+					mouseSwitchLatched = true;
+				}
+			} else if (magnitude <= sensitivity * 0.4f) {
+				mouseSwitchLatched = false;
 			}
 		}
 		else
 		{
-			bTargetRecentlySwitched = false;
+			mouseSwitchAccumX = 0.f;
+			mouseSwitchAccumY = 0.f;
+			mouseSwitchLatched = false;
 			if (Settings::bCameraHeadtracking && Settings::fCameraHeadtrackingDuration > 0.f) {
 				directionalMovementHandler->RefreshCameraHeadtrackTimer();
 			}
