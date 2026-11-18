@@ -286,11 +286,9 @@ private:
 
 	bool _enableLockBehindTarget = false;
 	bool _moveCameraBehindTarget = false; // tracks if targeted camera position is behind the target
-	bool _moveCameraBehindTarget_prev = false; // tracks state from previous frame
 	bool _isBehind = false;
-	bool _isBehind_prev = false; // tracks state from previous frame
 	bool _isLockedCameraTransitioning = false;
-	bool _isLockedCameraTransitioning_prev = false;
+	float _lockedCameraTransitionTimer = 0.f; // safety timeout for camera yaw/pitch transitions
 
 	bool _bResetCamera = false;
 	float _desiredCameraAngleX;

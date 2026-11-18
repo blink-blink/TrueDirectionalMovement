@@ -1,5 +1,27 @@
 Changelog:
 
+Fix: Target lock camera freezes with target behind / lock-behind never engages
+-----------------------------------------------------------------------------------------------------------------
+  * LookAtTarget derived the camera yaw from the projection of the target onto the
+    camera-player line, and while _isBehind it measured the angle from the *reversed*
+    camera direction. With the target directly behind the camera both vectors coincide,
+    so the yaw delta became 0: the camera never turned toward the target, pitch was
+    skipped, and the target stayed behind the camera (worse while standing still, when
+    the player's own auto-rotation is animation-driven).
+  * The yaw target is now absolute: the camera springs to the player->target world yaw
+    in normal lock, and to that yaw + PI (looking back at the player from the far side
+    of the target) in lock-behind mode. An absolute target has no zero-delta fixed
+    point, so the camera always turns the short way onto the target regardless of where
+    it starts.
+  * _isLockedCameraTransitioning now completes based on the actual yaw error (2 degrees)
+    with a 2s safety timeout, instead of requiring !_isBehind && angleDelta < 1 degree.
+    The old condition could stay true indefinitely during a behind-target swing, which
+    blocked UpdateMoveCameraBehindTarget and made the lock-behind feature never engage.
+  * Pitch now keeps tracking while _isBehind instead of returning early; the camera no
+    longer freezes at its previous elevation during the turn.
+  * Camera spring velocities are reset when the lock-behind mode flips, so momentum from
+    the previous framing cannot overshoot the transition.
+
 Fix: Two spring-state bugs in the target lock rewrite
 -----------------------------------------------------------------------------------------------------------------
   * Spring velocity state was shared between the camera springs (LookAtTarget, driving

@@ -2530,11 +2530,12 @@ void DirectionalMovementHandler::ResetLockBehindTarget()
 {
 	_moveCameraBehindTarget = false;
 	_isBehind = false;
-	_moveCameraBehindTarget_prev = false;
-	_isBehind_prev = false;
 	_enableLockBehindTarget = false;
 	_isLockedCameraTransitioning = false;
-	_isLockedCameraTransitioning_prev = false;
+	_lockedCameraTransitionTimer = 0.f;
+	// Don't carry spring momentum into/out of a lock-behind mode change.
+	_cameraYawVelocity = 0.f;
+	_cameraPitchVelocity = 0.f;
 }
 
 void DirectionalMovementHandler::ToggleLockBehindTarget()
@@ -2547,6 +2548,8 @@ void DirectionalMovementHandler::ToggleLockBehindTarget()
 
 		_enableLockBehindTarget = !_enableLockBehindTarget;
 		_isLockedCameraTransitioning = true;
+		_cameraYawVelocity = 0.f;
+		_cameraPitchVelocity = 0.f;
 	}
 }
 
@@ -2653,16 +2656,22 @@ void DirectionalMovementHandler::UpdateMoveCameraBehindTarget(const float a_dist
 			// switch to behind-target position if player-camera distance is more than  fCameraBehindTargetMinDistance + fCameraBehindTargetNoSwitchRange larger than the player-target distance
 			_moveCameraBehindTarget = true;
 			_isLockedCameraTransitioning = true;
+			_cameraYawVelocity = 0.f;
+			_cameraPitchVelocity = 0.f;
 		} else if (_moveCameraBehindTarget && nominalCameraToPlayerDist < a_distanceToTarget + fScale * Settings::fCameraBehindTargetMinDistance)
 		{
 			// switch to normal position if player-camera distance is less than fCameraBehindTargetMinDistance behind the target
 			_moveCameraBehindTarget = false;
 			_isLockedCameraTransitioning = true;
+			_cameraYawVelocity = 0.f;
+			_cameraPitchVelocity = 0.f;
 		}
 	} else
 	{
 		if (_moveCameraBehindTarget) {
 			_isLockedCameraTransitioning = true;
+			_cameraYawVelocity = 0.f;
+			_cameraPitchVelocity = 0.f;
 		}
 		_moveCameraBehindTarget = false;
 	}
@@ -2860,9 +2869,8 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 	cameraDirectionToTarget.Unitize();
 	RE::NiPoint3 cameraToPlayer = RE::NiPoint3(playerPos.x - cameraPos.x, playerPos.y - cameraPos.y, playerPos.z - cameraPos.z);
 
-	// If the camera should move behind the target, use the camera-player line as 1st reference for deltaAngle
-	// If the camera should move behind the player, use the camera-target line as 1st reference for deltaAngle
-	// This ensures that for both cases deltaAngle gets smaller as the camera approaches the target line
+	// _isBehind is kept for the API (IsTargetLockBehindTarget): the camera is
+	// between the player and the target, so the target is behind the camera.
 	RE::NiPoint3 from = _moveCameraBehindTarget ? playerToTarget : cameraToPlayer;
 	RE::NiPoint3 onto = _moveCameraBehindTarget ? cameraToPlayer : cameraToTarget;
 	RE::NiPoint3 projected = Project(from, onto);
@@ -2872,13 +2880,9 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 	projectedDirection.Unitize();
 	RE::NiPoint2 projectedDirectionXY(-projectedDirection.x, projectedDirection.y);
 
-	// yaw
-
 	RE::NiPoint2 forwardVector(0.f, 1.f);
-	// If the camera should move behind the player, _isBehind is computed relative to the camera-target line
 	RE::NiPoint2 isBehindDirection = Vec2Rotate(forwardVector, currentCharacterYaw + currentCameraYawOffset);
 	if (_moveCameraBehindTarget) {
-		// If the camera should move behind the target, _isBehind is computed relative to the camera-player line
 		isBehindDirection.x = -cameraToPlayer.x;
 		isBehindDirection.y = cameraToPlayer.y;
 		isBehindDirection.Unitize();
@@ -2886,62 +2890,44 @@ void DirectionalMovementHandler::LookAtTarget(RE::ActorHandle a_target)
 
 	_isBehind = (projectedDirectionXY.Dot(isBehindDirection) < 0);
 
-	if (_isLockedCameraTransitioning && !_isLockedCameraTransitioning_prev)
-	{
-		_isBehind_prev = _isBehind;
-		_moveCameraBehindTarget_prev = _moveCameraBehindTarget;
-	}
-	_isLockedCameraTransitioning_prev = _isLockedCameraTransitioning;
-
-	if (Settings::bTargetLockEnableLockBehindTarget && _isLockedCameraTransitioning && !_isBehind_prev && _moveCameraBehindTarget == _moveCameraBehindTarget_prev)
-	{
-		// keep camera movement stable during camera collisions with the environment
-		_isBehind = false;
-	}
-
-	_moveCameraBehindTarget_prev = _moveCameraBehindTarget;
-	_isBehind_prev = _isBehind;
-
-	// If the camera should move behind the player, use the camera-target line as 2nd reference for deltaAngle
-	RE::NiPoint2 currentCameraDirection = isBehindDirection; 
-	if (_moveCameraBehindTarget) {
-		// If the camera should move behind the target, use the target-player line as 2nd reference for deltaAngle
-		// Using the camera-target line would result in large angle variations (ie camera oscillations) when the camera is close to the target
-		currentCameraDirection.x = playerToTarget.x;
-		currentCameraDirection.y = -playerToTarget.y;
-		currentCameraDirection.Unitize();
-	}
-	auto reversedCameraDirection = currentCameraDirection * -1.f;
-	float behindAngle = _isLockedCameraTransitioning ? -PI2 : GetAngle(reversedCameraDirection, projectedDirectionXY); // always transition counterclockwise
-	float angleDelta = _isBehind ? behindAngle : GetAngle(currentCameraDirection, projectedDirectionXY);
-	if (_moveCameraBehindTarget) {
-		float cameraDirectionYaw = std::atan2(currentCameraDirection.x, currentCameraDirection.y);
-		RE::NiQuaternion cameraRotation;
-		thirdPersonState->GetRotation(cameraRotation);
-		angleDelta = GetYaw(cameraRotation) - cameraDirectionYaw;
-	}
-	angleDelta = NormalRelativeAngle(angleDelta);
+	// yaw
+	//
+	// Aim at an absolute world-space yaw derived from the player->target line:
+	//   - normal lock: look at the target
+	//   - lock behind target: look from the far side of the target back at the player
+	//
+	// The previous implementation derived a relative delta from the projection of
+	// the target onto the camera-player line, and measured it from the *reversed*
+	// camera direction while _isBehind. With the target dead behind the camera,
+	// both vectors coincide -> delta == 0, so the camera never turned and merely
+	// kept looking forward (the "target behind" lock-on freeze). An absolute yaw
+	// target has no such fixed point: the spring always turns the camera the
+	// short way onto the target/behind-target position, wherever it starts.
+	const float targetWorldYaw = std::atan2(targetPos.x - playerPos.x, targetPos.y - playerPos.y);
+	float desiredWorldCameraYaw = _moveCameraBehindTarget ? NormalRelativeAngle(targetWorldYaw + PI) : targetWorldYaw;
+	float desiredFreeCameraRotation = NormalRelativeAngle(desiredWorldCameraYaw - currentCharacterYaw);
 
 	// Analytic spring is stable at any dt, so no cap needed (frame-independent).
 	const float realTimeDeltaTime = GetRealTimeDeltaTime();
 
-	float desiredFreeCameraRotation = currentCameraYawOffset + angleDelta;
-	if (_isLockedCameraTransitioning && !_isBehind && fabs(angleDelta) < PI/180.f) {
-		_isLockedCameraTransitioning = false;
-		_isLockedCameraTransitioning_prev = false;
+	// Finish a transition once the camera has (almost) reached the yaw target.
+	// This must not depend on _isBehind: during the swing the old projection test
+	// could stay true indefinitely, leaving _isLockedCameraTransitioning stuck and
+	// blocking UpdateMoveCameraBehindTarget for the rest of the lock.
+	if (_isLockedCameraTransitioning) {
+		_lockedCameraTransitionTimer += realTimeDeltaTime;
+		const float yawError = NormalRelativeAngle(desiredFreeCameraRotation - thirdPersonState->freeRotation.x);
+		// 2 degrees, or a hard 2s timeout so a transition can never wedge the mode switch.
+		if (fabs(yawError) < PI / 90.f || _lockedCameraTransitionTimer > 2.f) {
+			_isLockedCameraTransitioning = false;
+			_lockedCameraTransitionTimer = 0.f;
+		}
+	} else {
+		_lockedCameraTransitionTimer = 0.f;
 	}
 
 	// Analytic critically-damped spring (frame-independent, accumulates momentum).
 	CriticallyDampedSpringAngle(thirdPersonState->freeRotation.x, _cameraYawVelocity, desiredFreeCameraRotation, realTimeDeltaTime, Settings::fTargetLockSpringStiffness);
-
-	if (_isBehind)
-	{
-		// The pitch spring is skipped while behind the player during a camera
-		// transition; zero its velocity so no stale momentum kicks the pitch
-		// when tracking resumes.
-		_cameraPitchVelocity = 0.f;
-		return; // don't adjust pitch
-	}
 
 	// pitch
 	RE::NiPoint3 playerAngle = ToOrientationRotation(playerDirectionToTarget);
