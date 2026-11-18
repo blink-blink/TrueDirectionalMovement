@@ -1,5 +1,22 @@
 Changelog:
 
+Fix: Lock-behind target never engages (MCM setting ignored, distance gate unreachable)
+---------------------------------------------------------------------------------------------------
+  * ToggleTargetLock() called ResetLockBehindTarget(), which clears _enableLockBehindTarget,
+    and never restored it from Settings::bTargetLockEnableLockBehindTarget. The MCM checkbox
+    was therefore ignored: every new lock started with the feature off, and the only way to
+    turn it on was the toggle hotkey (unbound by default).
+  * Every new lock now starts with _enableLockBehindTarget set from the MCM checkbox. The
+    toggle hotkey still flips the mode on/off per lock.
+  * The switch-in gate required nominalCameraToPlayerDist > distanceToTarget + 200. That
+    margin only works for the very long dragon camera; a normal third-person boom
+    (~100-200 units) can never satisfy it, so the feature stayed off even when enabled.
+    The camera now switches behind the target once it can clear the target by a body-sized
+    margin (up to 50 units, capped at 25% of the current boom), which makes close-range
+    combat work at normal camera distances.
+  * Added "LockBehind:" log lines with the nominal camera distance and target distance for
+    in-game verification and threshold tuning.
+
 Fix: Target lock camera freezes with target behind / lock-behind never engages
 -----------------------------------------------------------------------------------------------------------------
   * LookAtTarget derived the camera yaw from the projection of the target onto the

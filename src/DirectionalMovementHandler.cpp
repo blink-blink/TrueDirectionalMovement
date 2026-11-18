@@ -1453,6 +1453,11 @@ bool DirectionalMovementHandler::ToggleTargetLock(bool bEnable, bool bPressedMan
 		{
 			SetTarget(actor);
 
+			// The MCM checkbox is the master enable: start every new lock with the
+			// configured lock-behind mode. The toggle key can still flip it per lock.
+			_enableLockBehindTarget = Settings::bTargetLockEnableLockBehindTarget;
+			logger::info("LockBehind: target locked, enabled={}", _enableLockBehindTarget);
+
 			// Set graph variable
 			playerCharacter->SetGraphVariableBool(GraphVarNames::TDM_TargetLock, true);
 
@@ -2621,6 +2626,17 @@ void DirectionalMovementHandler::UpdateMoveCameraBehindTarget(const float a_dist
 		nominalCameraToPlayerDist = cameraToPlayerDist;
 	}
 
+	{
+		static float s_lockBehindLogTimer = 0.f;
+		s_lockBehindLogTimer += GetRealTimeDeltaTime();
+		if (s_lockBehindLogTimer >= 2.f) {
+			s_lockBehindLogTimer = 0.f;
+			logger::info("LockBehind: enabled={} moveBehind={} transitioning={} nominalCamDist={:.1f} targetDist={:.1f}",
+				_enableLockBehindTarget, _moveCameraBehindTarget, _isLockedCameraTransitioning,
+				nominalCameraToPlayerDist, a_distanceToTarget);
+		}
+	}
+
 	if (_enableLockBehindTarget)
 	{
 		float fScale = 1.f;
@@ -2651,20 +2667,37 @@ void DirectionalMovementHandler::UpdateMoveCameraBehindTarget(const float a_dist
 			}
 		}
 
-		if (!_moveCameraBehindTarget && nominalCameraToPlayerDist > a_distanceToTarget + fScale * Settings::fCameraBehindTargetMinDistance + fScale * Settings::fCameraBehindTargetNoSwitchRange)
+		// How far the camera must end up beyond the target to count as "behind" it.
+		// The old fixed MinDistance + NoSwitchRange (200 units) only ever worked with
+		// the very long dragon camera: with a normal ~100-200 unit third-person boom
+		// the player-target distance can never be small enough, so the mode never
+		// engaged. Require a body-sized clearance instead, capped for short booms.
+		const float clearance = Clamp(
+			fScale * Settings::fCameraBehindTargetMinDistance,
+			0.f,
+			0.25f * nominalCameraToPlayerDist);
+
+		if (!_moveCameraBehindTarget && nominalCameraToPlayerDist > a_distanceToTarget + clearance)
 		{
-			// switch to behind-target position if player-camera distance is more than  fCameraBehindTargetMinDistance + fCameraBehindTargetNoSwitchRange larger than the player-target distance
+			// Switch behind the target once the camera can clear it. Checked every
+			// frame, so a target that was too far at lock time can still engage the
+			// mode later when the player closes the distance.
 			_moveCameraBehindTarget = true;
 			_isLockedCameraTransitioning = true;
 			_cameraYawVelocity = 0.f;
 			_cameraPitchVelocity = 0.f;
-		} else if (_moveCameraBehindTarget && nominalCameraToPlayerDist < a_distanceToTarget + fScale * Settings::fCameraBehindTargetMinDistance)
+			logger::info("LockBehind: switching behind target (nominalCamDist={:.1f}, targetDist={:.1f}, clearance={:.1f})",
+				nominalCameraToPlayerDist, a_distanceToTarget, clearance);
+		} else if (_moveCameraBehindTarget && nominalCameraToPlayerDist < a_distanceToTarget)
 		{
-			// switch to normal position if player-camera distance is less than fCameraBehindTargetMinDistance behind the target
+			// The camera is no longer beyond the target - go back to the normal
+			// lock so the target is visible again.
 			_moveCameraBehindTarget = false;
 			_isLockedCameraTransitioning = true;
 			_cameraYawVelocity = 0.f;
 			_cameraPitchVelocity = 0.f;
+			logger::info("LockBehind: switching to normal lock (nominalCamDist={:.1f}, targetDist={:.1f})",
+				nominalCameraToPlayerDist, a_distanceToTarget);
 		}
 	} else
 	{
