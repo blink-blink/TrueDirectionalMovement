@@ -69,7 +69,21 @@ namespace Scaleform
 	{
 		AddWidgetTask([=]() {
 			_refHandle = a_refHandle;
-			_targetPoint = a_targetPoint;	
+			_targetPoint = a_targetPoint;
+
+			// A change can be queued while the widget is already fading out (target
+			// killed in the same instant as an auto-switch, for example). Reviving it
+			// then cancels the pending removal, and if the new target is already gone
+			// nothing will ever ask for the removal again - the reticle stays on screen
+			// with no owner. Vet the target once, here, and let TrueHUD dispose of the
+			// widget instead of reviving it.
+			auto ref = _refHandle.get();
+			auto actor = ref ? ref->As<RE::Actor>() : nullptr;
+
+			if (!actor || actor->IsDead() || actor->IsDisabled()) {
+				_widgetState = WidgetState::kRemoved;
+				return;
+			}
 
 			if (_widgetState >= WidgetState::kPendingRemoval) {
 				SetWidgetState(WidgetState::kActive);

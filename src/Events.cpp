@@ -237,6 +237,14 @@ namespace Events
 				} else {
 					directionalMovementHandler->ToggleTargetLock(false);
 				}
+
+				// If nothing was acquired the lock is over and the target no longer
+				// exists. Remove the reticle outright instead of relying on the SWF
+				// fade, which has nothing left to report against once the actor is gone.
+				if (!directionalMovementHandler->HasTargetLocked()) {
+					logger::info("Target lock reticle: locked target died and no new target was acquired, removing reticle");
+					directionalMovementHandler->RemoveTargetLockReticle(true);
+				}
 			}
 		}
 
@@ -256,6 +264,10 @@ namespace Events
 						directionalMovementHandler->ToggleTargetLock(true);
 					} else {
 						directionalMovementHandler->ToggleTargetLock(false);
+					}
+
+					if (!directionalMovementHandler->HasTargetLocked()) {
+						directionalMovementHandler->RemoveTargetLockReticle(true);
 					}
 				}
 			}

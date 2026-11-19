@@ -1,5 +1,26 @@
 Changelog:
 
+Fix: Target lock reticle could stay on screen after the locked target died
+---------------------------------------------------------------------------------------------------
+  * TrueHUD only renders the reticle; the lifecycle is TDM's. RemoveWidget(Normal) just
+    sets the widget to kPendingRemoval and waits for TDM's widget to report kRemoved,
+    which it does from the SWF fade-out (isReadyToRemove / onReverseComplete). When the
+    locked actor dies and no new target is acquired there is nothing left driving that
+    fade, so the reticle could be left on screen permanently - and with _target already
+    empty, pressing the lock key again had nothing to release.
+  * TargetLockReticle::ChangeTarget() no longer revives a widget that is already pending
+    removal when the incoming target is gone (null, dead or disabled). It marks the
+    widget kRemoved instead, so TrueHUD disposes of it on the same tick. Reviving it
+    there cancelled the pending removal with no owner left to request another one - the
+    race behind the "sometimes" in-game repro (e.g. auto-target-next picking a target
+    that dies in the same instant).
+  * The existing TESDeathEvent / TESEnterBleedoutEvent handler now removes the reticle
+    immediately when the locked actor dies and no replacement target was acquired.
+    Immediate mode disposes of the widget synchronously instead of relying on the SWF
+    animation, with no per-frame polling added.
+  * RemoveTargetLockReticle() takes an optional a_immediate flag; the ordinary unlock
+    path still uses Normal so the reticle keeps its collapse animation.
+
 Fix: Lock-behind target never engages (MCM setting ignored, distance gate unreachable)
 ---------------------------------------------------------------------------------------------------
   * ToggleTargetLock() called ResetLockBehindTarget(), which clears _enableLockBehindTarget,

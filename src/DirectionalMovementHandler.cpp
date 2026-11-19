@@ -2300,9 +2300,18 @@ void DirectionalMovementHandler::ReticleRemoved()
 	DirectionalMovementHandler::GetSingleton()->_bReticleRemoved = true;
 }
 
-void DirectionalMovementHandler::RemoveTargetLockReticle()
+void DirectionalMovementHandler::RemoveTargetLockReticle(bool a_immediate)
 {
-	APIs::TrueHUD->RemoveWidget(SKSE::GetPluginHandle(), 'LOCK', 0, TRUEHUD_API::WidgetRemovalMode::Normal);
+	if (!APIs::TrueHUD) {
+		return;
+	}
+
+	// Normal mode only flips the widget to kPendingRemoval and lets the SWF fade
+	// animation report isReadyToRemove. Immediate disposes of it right away, which
+	// is what we want when the target is gone and there is nothing left to animate
+	// towards (a stuck fade there leaves the reticle on screen forever).
+	APIs::TrueHUD->RemoveWidget(SKSE::GetPluginHandle(), 'LOCK', 0,
+		a_immediate ? TRUEHUD_API::WidgetRemovalMode::Immediate : TRUEHUD_API::WidgetRemovalMode::Normal);
 }
 
 void DirectionalMovementHandler::SetHeadtrackTarget(RE::HighProcessData::HEAD_TRACK_TYPE a_headtrackType, RE::TESObjectREFR* a_target)

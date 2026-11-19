@@ -169,7 +169,7 @@ public:
 
 	void AddTargetLockReticle(RE::ActorHandle a_target, RE::NiPointer<RE::NiAVObject> a_targetPoint);
 	void ReticleRemoved();
-	void RemoveTargetLockReticle();
+	void RemoveTargetLockReticle(bool a_immediate = false);
 	
 	void SetHeadtrackTarget(RE::HighProcessData::HEAD_TRACK_TYPE a_headtrackType, RE::TESObjectREFR* a_target);
 
